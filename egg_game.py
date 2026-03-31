@@ -101,7 +101,7 @@ CAR_SKINS = [
     {"name": "Truck Body", "unlock": 1400, "body": (90, 90, 100), "trim": (45, 45, 55), "wheel": BLACK},
 ]
 
-CHECKPOINTS = [250, 500, 750, 1000, 1400, 1800, 2200, 2700, 3200, 3800]
+CHECKPOINTS = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
 AIRTIME_TIERS = [(0.30, 20), (0.80, 50), (1.20, 90)]
 
 
@@ -838,60 +838,68 @@ class Game:
         balance_ratio = 1.0 - min(1.0, abs(self.egg_offset) / max(1.0, wall_limit))
         difficulty_percent = int(self.difficulty * 100)
 
-        score_text = FONT.render(f"Distance: {int(self.score)}", True, BLACK)
-        best_text = SMALL_FONT.render(f"Best: {int(self.best_distance)}", True, BLACK)
-        speed_text = SMALL_FONT.render(f"Speed: {self.car_vx:.1f}", True, BLACK)
-        cp_text = SMALL_FONT.render(f"Checkpoint: {int(self.last_checkpoint_distance)}", True, BLACK)
+        # top HUD background bar
+        hud_height = 110
+        hud = pygame.Surface((WIDTH, hud_height), pygame.SRCALPHA)
+        hud.fill((255, 255, 255, 170))
+        surface.blit(hud, (0, 0))
+        pygame.draw.line(surface, (60, 60, 60), (0, hud_height), (WIDTH, hud_height), 2)
 
-        surface.blit(score_text, (25, 20))
-        surface.blit(best_text, (25, 56))
-        surface.blit(speed_text, (25, 86))
-        surface.blit(cp_text, (25, 116))
+        # left info
+        surface.blit(FONT.render(f"Distance: {int(self.score)}", True, BLACK), (20, 10))
+        surface.blit(SMALL_FONT.render(f"Best: {int(self.best_distance)}", True, BLACK), (20, 42))
+        surface.blit(SMALL_FONT.render(f"Speed: {self.car_vx:.1f}", True, BLACK), (20, 70))
 
-        pygame.draw.rect(surface, BLACK, (25, 150, 220, 22), 2)
-        pygame.draw.rect(surface, BLUE, (27, 152, int(216 * balance_ratio), 18))
-        surface.blit(SMALL_FONT.render("Egg Balance", True, BLACK), (25, 177))
+        # middle info
+        surface.blit(SMALL_FONT.render(f"Checkpoint: {int(self.last_checkpoint_distance)}", True, BLACK), (220, 14))
+        surface.blit(SMALL_FONT.render(f"", True, BLACK), (220, 42))
+        surface.blit(SMALL_FONT.render(f"Difficulty: {difficulty_percent}%", True, BLACK), (220, 70))
 
-        pygame.draw.rect(surface, BLACK, (25, 215, 220, 18), 2)
-        pygame.draw.rect(surface, ORANGE, (27, 217, int(216 * self.difficulty), 14))
-        surface.blit(SMALL_FONT.render(f"Difficulty: {difficulty_percent}%", True, BLACK), (25, 240))
+        # egg balance bar
+        bar_x = 430
+        bar_y = 18
+        bar_w = 180
+        bar_h = 16
+        pygame.draw.rect(surface, BLACK, (bar_x, bar_y, bar_w, bar_h), 2)
+        pygame.draw.rect(surface, BLUE, (bar_x + 2, bar_y + 2, int((bar_w - 4) * balance_ratio), bar_h - 4))
+        surface.blit(SMALL_FONT.render("Egg Balance", True, BLACK), (430, 40))
 
+        # next unlock
         next_unlock = self.next_unlock_distance()
         if next_unlock is not None:
             unlock_progress = clamp(self.score / next_unlock, 0.0, 1.0)
-            pygame.draw.rect(surface, BLACK, (25, 276, 220, 18), 2)
-            pygame.draw.rect(surface, PURPLE, (27, 278, int(216 * unlock_progress), 14))
-            surface.blit(SMALL_FONT.render(f"Next unlock: {next_unlock} m", True, BLACK), (25, 300))
+            unlock_x = 430
+            unlock_y = 68
+            unlock_w = 180
+            unlock_h = 16
+            pygame.draw.rect(surface, BLACK, (unlock_x, unlock_y, unlock_w, unlock_h), 2)
+            pygame.draw.rect(surface, PURPLE, (unlock_x + 2, unlock_y + 2, int((unlock_w - 4) * unlock_progress), unlock_h - 4))
+            surface.blit(SMALL_FONT.render(f"Next unlock: {next_unlock} m", True, BLACK), (620, 66))
         else:
-            surface.blit(SMALL_FONT.render("All skins unlocked!", True, BLACK), (25, 282))
+            surface.blit(SMALL_FONT.render("", True, BLACK), (620, 88))
 
-        airtime = self.airtime_frames / FPS
-        airtime_text = SMALL_FONT.render(f"Airtime: {airtime:.2f}s", True, BLACK)
+        # right side info
         skin_text = SMALL_FONT.render(
             f"Egg: {self.current_egg_skin()['name']} | Car: {self.current_car_skin()['name']}",
             True,
             BLACK,
         )
         controls = SMALL_FONT.render("Drive: A/D or Arrows", True, BLACK)
-        restart = SMALL_FONT.render("R restart | C continue at checkpoint", True, BLACK)
+        restart = SMALL_FONT.render("R restart | C checkpoint", True, BLACK)
 
-        surface.blit(airtime_text, (25, 338))
-        surface.blit(skin_text, (25, 370))
-        surface.blit(controls, (25, 402))
-        surface.blit(restart, (25, 432))
+        surface.blit(skin_text, (700, 12))
+        surface.blit(controls, (700, 42))
+        surface.blit(restart, (700, 70))
 
         if self.start_grace_timer > 0 or self.car_x < 180 + self.start_grace_distance:
-            surface.blit(SMALL_FONT.render("Easy start zone", True, BLACK), (25, 464))
+            surface.blit(SMALL_FONT.render("", True, DARK_GREEN), (930, 12))
 
         if self.big_wobble_flash_timer > 0:
-            surface.blit(SMALL_FONT.render("Huge bump!", True, DARK_RED), (25, 494))
+            surface.blit(SMALL_FONT.render("Huge bump!", True, DARK_RED), (930, 42))
         elif self.wobble_flash_timer > 0:
-            surface.blit(SMALL_FONT.render("Basket hit!", True, DARK_RED), (25, 494))
+            surface.blit(SMALL_FONT.render("Basket hit!", True, DARK_RED), (930, 42))
 
-        if self.checkpoint_flash > 0:
-            checkpoint_text = BIG_FONT.render("CHECKPOINT!", True, BLUE)
-            surface.blit(checkpoint_text, checkpoint_text.get_rect(center=(WIDTH // 2, 90)))
-
+        
     def draw_popups(self, surface):
         y = 125
         for popup in self.popups[:3]:
