@@ -32,6 +32,7 @@ YELLOW = (245, 205, 60)
 EGG = (245, 235, 210)
 EGG_LINE = (140, 100, 70)
 BLUE = (60, 90, 220)
+ORANGE = (245, 150, 60)
 
 GROUND_BASE = 520
 
@@ -39,25 +40,59 @@ CAR_WIDTH = 90
 CAR_HEIGHT = 28
 WHEEL_RADIUS = 16
 
-ACCEL = 0.28
-FRICTION = 0.96
-MAX_SPEED = 6.0
+ACCEL = 0.24
+FRICTION = 0.965
+BASE_MAX_SPEED = 4.4
 GRAVITY = 0.45
 
-EGG_STIFFNESS = 0.035
+EGG_STIFFNESS = 0.038
 EGG_DAMPING = 0.93
-FAIL_ANGLE = 1.28
+FAIL_ANGLE = 1.38
+
+START_FLAT_DISTANCE = 700
+TRANSITION_DISTANCE = 260
 
 camera_x = 0.0
 
 
+def lerp(a: float, b: float, t: float) -> float:
+    return a + (b - a) * t
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def smoothstep(edge0: float, edge1: float, x: float) -> float:
+    if edge1 == edge0:
+        return 1.0
+    t = clamp((x - edge0) / (edge1 - edge0), 0.0, 1.0)
+    return t * t * (3 - 2 * t)
+
+
+def get_difficulty_from_x(x: float) -> float:
+    # Starts easy and gets harder as the player goes farther
+    return clamp((x - 180) / 2400.0, 0.0, 1.0)
+
+
 def get_ground_y(x: float) -> float:
-    return (
+    # Terrain starts flat, then slowly blends into hills,
+    # and hills get bigger as the player travels farther.
+    difficulty = get_difficulty_from_x(x)
+
+    amp1 = lerp(18, 55, difficulty)
+    amp2 = lerp(8, 28, difficulty)
+    amp3 = lerp(3, 10, difficulty)
+
+    full_hills = (
         GROUND_BASE
-        + 55 * math.sin(x * 0.008)
-        + 28 * math.sin(x * 0.021)
-        + 10 * math.sin(x * 0.055)
+        + amp1 * math.sin(x * 0.008)
+        + amp2 * math.sin(x * 0.021)
+        + amp3 * math.sin(x * 0.055)
     )
+
+    blend = smoothstep(START_FLAT_DISTANCE, START_FLAT_DISTANCE + TRANSITION_DISTANCE, x)
+    return lerp(GROUND_BASE, full_hills, blend)
 
 
 def get_slope_angle(x: float) -> float:
@@ -112,6 +147,16 @@ class Game:
         self.game_over = False
         self.particles = []
 
+        self.difficulty = 0.0
+        self.max_speed = BASE_MAX_SPEED
+
+        self.prev_slope = get_slope_angle(self.car_x)
+        self.wobble_flash_timer = 0
+        self.big_wobble_flash_timer = 0
+
+        self.start_grace_distance = 260
+        self.start_grace_timer = FPS * 3
+
     def handle_event(self, event):
         if event.type == pygame.KEYDOWN:
             if event.key in (pygame.K_a, pygame.K_LEFT):
@@ -127,17 +172,38 @@ class Game:
             if event.key in (pygame.K_d, pygame.K_RIGHT):
                 self.right_pressed = False
 
+    def add_wobble_from_bump(self, bump_strength: float):
+        if bump_strength < 0.008:
+            return
+
+        # Smaller bumps just wobble the egg. Bigger bumps wobble it more.
+        direction = random.choice([-1, 1])
+        wobble = bump_strength * 8.5 * direction
+
+        if bump_strength > 0.03:
+            wobble *= 1.4
+            self.big_wobble_flash_timer = 10
+        else:
+            self.wobble_flash_timer = 8
+
+        self.egg_angular_velocity += wobble
+
     def update(self):
         global camera_x
 
         if not self.game_over:
+            self.difficulty = get_difficulty_from_x(self.car_x)
+            self.max_speed = lerp(BASE_MAX_SPEED, 6.3, self.difficulty)
+
+            accel_now = lerp(0.22, 0.29, self.difficulty)
+
             if self.left_pressed:
-                self.car_vx -= ACCEL
+                self.car_vx -= accel_now
             if self.right_pressed:
-                self.car_vx += ACCEL
+                self.car_vx += accel_now
 
             self.car_vx *= FRICTION
-            self.car_vx = max(-MAX_SPEED, min(MAX_SPEED, self.car_vx))
+            self.car_vx = max(-self.max_speed, min(self.max_speed, self.car_vx))
             self.car_x += self.car_vx
 
             if self.car_x < 120:
@@ -146,7 +212,18 @@ class Game:
 
             slope = get_slope_angle(self.car_x)
 
-            target_egg = -slope * 1.25 - self.car_vx * 0.055
+            # Detect bump severity from quick slope change + speed.
+            slope_change = abs(slope - self.prev_slope)
+            speed_factor = abs(self.car_vx) / max(0.1, self.max_speed)
+            bump_strength = slope_change * (0.55 + speed_factor * 0.9)
+
+            self.add_wobble_from_bump(bump_strength)
+            self.prev_slope = slope
+
+            egg_slope_multiplier = lerp(0.95, 1.35, self.difficulty)
+            egg_speed_multiplier = lerp(0.035, 0.06, self.difficulty)
+
+            target_egg = -slope * egg_slope_multiplier - self.car_vx * egg_speed_multiplier
             torque = (target_egg - self.egg_angle) * EGG_STIFFNESS
 
             self.egg_angular_velocity += torque
@@ -156,7 +233,13 @@ class Game:
             self.score = max(self.score, self.car_x - 180)
             self.best_distance = self.score
 
-            if abs(self.egg_angle) > FAIL_ANGLE:
+            if self.start_grace_timer > 0:
+                self.start_grace_timer -= 1
+
+            in_start_grace_zone = self.car_x < 180 + self.start_grace_distance or self.start_grace_timer > 0
+            fail_limit = FAIL_ANGLE + (0.28 if in_start_grace_zone else 0.0)
+
+            if abs(self.egg_angle) > fail_limit:
                 self.start_egg_fall()
 
         else:
@@ -171,6 +254,11 @@ class Game:
                     self.egg_falling = False
                     self.egg_broken = True
                     self.make_egg_particles()
+
+        if self.wobble_flash_timer > 0:
+            self.wobble_flash_timer -= 1
+        if self.big_wobble_flash_timer > 0:
+            self.big_wobble_flash_timer -= 1
 
         for p in self.particles[:]:
             p.update()
@@ -302,18 +390,35 @@ class Game:
 
         balance_ratio = 1.0 - min(1.0, abs(self.egg_angle) / FAIL_ANGLE)
         balance_percent = int(balance_ratio * 100)
-
         balance_text = SMALL_FONT.render(f"Balance: {balance_percent}%", True, BLACK)
+
+        difficulty_percent = int(self.difficulty * 100)
+        difficulty_text = SMALL_FONT.render(f"Difficulty: {difficulty_percent}%", True, BLACK)
 
         surface.blit(score_text, (25, 20))
         surface.blit(speed_text, (25, 60))
         surface.blit(balance_text, (25, 90))
+        surface.blit(difficulty_text, (25, 185))
 
         pygame.draw.rect(surface, BLACK, (25, 125, 220, 24), 2)
         pygame.draw.rect(surface, BLUE, (27, 127, int(216 * balance_ratio), 20))
 
+        pygame.draw.rect(surface, BLACK, (25, 215, 220, 18), 2)
+        pygame.draw.rect(surface, ORANGE, (27, 217, int(216 * self.difficulty), 14))
+
         controls = SMALL_FONT.render("A/D or Arrow Keys to drive", True, BLACK)
-        surface.blit(controls, (25, 160))
+        surface.blit(controls, (25, 245))
+
+        if self.start_grace_timer > 0 or self.car_x < 180 + self.start_grace_distance:
+            grace_text = SMALL_FONT.render("Easy start zone", True, BLACK)
+            surface.blit(grace_text, (25, 275))
+
+        if self.big_wobble_flash_timer > 0:
+            wobble_text = SMALL_FONT.render("Big bump! Hold steady!", True, DARK_RED)
+            surface.blit(wobble_text, (25, 305))
+        elif self.wobble_flash_timer > 0:
+            wobble_text = SMALL_FONT.render("Bump! Egg wobbling", True, DARK_RED)
+            surface.blit(wobble_text, (25, 305))
 
     def draw_game_over(self, surface):
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
